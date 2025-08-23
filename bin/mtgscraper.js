@@ -86,8 +86,6 @@ function maybeOpen(filePath) {
 }
 
 // ======= Google Sheets setup (CI-friendly) =======
-import fs from "node:fs";
-import path from "node:path";
 import { google } from "googleapis";
 
 const SPREADSHEET_ID = "1_yLY6WHXpDq974gWveUHs_A1zF8jl3E4xmSKjnQqfcs";
