@@ -1,4 +1,4 @@
-# OS
+# OS cruft
 .DS_Store
 
 # Node
@@ -14,7 +14,7 @@ build/
 .cache/
 *.log
 
-# Puppeteer / Playwright caches & binaries
+# Puppeteer / browsers (HUGE)
 **/.local-chromium/
 **/chromium/
 **/chrome-win/
