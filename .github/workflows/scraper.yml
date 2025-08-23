@@ -24,7 +24,7 @@ jobs:
 
       - name: Run scraper
         env:
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          GCP_KEY_JSON: ${{ secrets.GCP_KEY_JSON }}
           CK_DEBUG: "1"
           CK_DUMP: "0"
           CK_OPEN: "0"
