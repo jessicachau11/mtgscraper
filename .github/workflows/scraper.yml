@@ -1,31 +1,35 @@
-name: Run MTG Scraper
+name: CK Scraper
 
 on:
   schedule:
-    # Runs every day at midnight Seattle time (08:00 UTC)
-    - cron: "0 8 * * *"
-  workflow_dispatch: # allows manual run from GitHub UI
+    - cron: "0 * * * *"   # every hour
+  workflow_dispatch:
 
 jobs:
-  scrape:
+  run:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Write Google credentials file
-        run: echo "${{ secrets.GCP_KEY_JSON }}" > gcp-key.json
+      - name: Install deps
+        run: npm ci
 
       - name: Run scraper
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
-        run: node bin/mtgscraper.js
+          CK_DEBUG: "0"
+          CK_DUMP: "0"
+          CK_OPEN: "0"
+          CK_NORMALIZE_RARITY: "0"
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > ./gcp-key.json
+          export GOOGLE_APPLICATION_CREDENTIALS="$PWD/gcp-key.json"
+          node bin/mtgscraper.js
