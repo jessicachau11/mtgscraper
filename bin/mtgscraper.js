@@ -85,12 +85,30 @@ function maybeOpen(filePath) {
   }
 }
 
-// ======= Google Sheets setup =======
-const KEYFILEPATH = "/Users/Jessica/mtgscraper/core-trees-469300-m2-e8526e6ceb46.json";
+// ======= Google Sheets setup (CI-friendly) =======
+import fs from "node:fs";
+import path from "node:path";
+import { google } from "googleapis";
+
 const SPREADSHEET_ID = "1_yLY6WHXpDq974gWveUHs_A1zF8jl3E4xmSKjnQqfcs";
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
-const auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: SCOPES });
+let auth;
+
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  // ✅ Use JSON directly from GitHub Actions secret
+  const creds = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+  auth = new google.auth.GoogleAuth({ credentials: creds, scopes: SCOPES });
+} else {
+  // ✅ Local dev fallback (expects gcp-key.json in project root)
+  const KEYFILEPATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.resolve("gcp-key.json");
+  if (!fs.existsSync(KEYFILEPATH)) {
+    console.error("❌ No credentials found. Provide GOOGLE_APPLICATION_CREDENTIALS_JSON or a gcp-key.json file.");
+    process.exit(1);
+  }
+  auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: SCOPES });
+}
+
 const sheets = google.sheets({ version: "v4", auth });
 
 // ======= Sheets helpers =======
