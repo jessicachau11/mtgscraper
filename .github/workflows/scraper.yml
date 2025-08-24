@@ -3,9 +3,9 @@ name: CK Scraper
 on:
   schedule:
     # every hour:
-    #- cron: "0 * * * *"
+    - cron: "0 * * * *"
     #every 30 min:
-    - cron: "*/30 * * * *"
+    #- cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
