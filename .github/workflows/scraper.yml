@@ -2,29 +2,28 @@ name: CK Scraper
 
 on:
   schedule:
-    # every hour:
-    - cron: "0 * * * *"
-    #every 30 min:
-    #- cron: "*/30 * * * *"
+    - cron: "0 * * * *"   # every hour (UTC)
   workflow_dispatch:
+
+concurrency:
+  group: ck-scraper
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install deps
         run: npm ci
-
       - name: Run scraper
         env:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_KEY_JSON }}
@@ -32,4 +31,3 @@ jobs:
           CK_DUMP: "0"
           CK_OPEN: "0"
         run: node bin/mtgscraper.js
-
