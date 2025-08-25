@@ -10,15 +10,57 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import puppeteer from "puppeteer";
 
-// ======= Debug + CI-safe flags =======
+// ======= Debug helpers =======
 const DEBUG = process.env.CK_DEBUG === "1" || false;
 const RUN_ID = new Date().toISOString().replace(/[:.]/g, "-");
 function dbg(...args) { if (DEBUG) console.log("[DBG]", ...args); }
 
-// In CI we don't want to dump/open HTML. Defaults now depend on env only.
-const DUMP_HTML = process.env.CK_DUMP === "1";        // default false
-const AUTO_OPEN_HTML = process.env.CK_OPEN === "1";   // default false
-const NORMALIZE_RARITY = process.env.CK_NORMALIZE_RARITY === "1"; // opt-in
+const DUMP_HTML = process.env.CK_DUMP === "1" || true;
+const AUTO_OPEN_HTML = process.env.CK_OPEN === "1" || true;
+const NORMALIZE_RARITY = process.env.CK_NORMALIZE_RARITY === "1";
+
+// ======= Time helpers =======
+const TZ = "America/Los_Angeles";
+
+// Seattle-local JS Date (for human-readable stamps only)
+function seattleNow() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+}
+
+// "YYYY-MM-DD HH:MM:SS" (24h) Seattle-local string (for Filters!I)
+function seattleStampStr(d = seattleNow()) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const HH = String(d.getHours()).padStart(2, "0");
+  const MM = String(d.getMinutes()).padStart(2, "0");
+  const SS = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${HH}:${MM}:${SS}`;
+}
+
+// Convert the *Seattle local wall time* to a Google Sheets serial,
+// using all-UTC math so it's stable regardless of where the code runs.
+function toSheetsSerial() {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
+  const Y = Number(parts.year);
+  const M = Number(parts.month);
+  const D = Number(parts.day);
+  const h = Number(parts.hour);
+  const m = Number(parts.minute);
+  const s = Number(parts.second);
+
+  // Sheets/Excel epoch start: 1899-12-30 (day 0), use UTC baseline.
+  const msSinceEpochUTC =
+    Date.UTC(Y, M - 1, D, h, m, s) - Date.UTC(1899, 11, 30, 0, 0, 0);
+
+  return msSinceEpochUTC / 86400000; // ms per day
+}
 
 function safeSlug(s) {
   return String(s || "unknown").toLowerCase().replace(/[^a-z0-9_-]+/gi, "_").slice(0, 80);
@@ -43,28 +85,29 @@ function maybeOpen(filePath) {
   }
 }
 
-// ======= Google Sheets setup =======
-// Read from env first so CI/Actions can inject credentials & target sheet.
-const KEYFILEPATH =
-  process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-  "/Users/Jessica/mtgscraper/core-trees-469300-m2-e8526e6ceb46.json";
-
-const SPREADSHEET_ID =
-  process.env.SPREADSHEET_ID ||
-  "1_yLY6WHXpDq974gWveUHs_A1zF8jl3E4xmSKjnQqfcs";
-
+// ======= Google Sheets setup (CI-friendly) =======
+const SPREADSHEET_ID = "1_yLY6WHXpDq974gWveUHs_A1zF8jl3E4xmSKjnQqfcs";
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-const auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: SCOPES });
-const sheets = google.sheets({ version: "v4", auth });
 
-// ======= Helpers =======
-function seattleStamp() {
-  const s = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
-  const m = s.match(/(\d+)\/(\d+)\/(\d+),\s*(.+)/);
-  const [month, day, year, time] = m.slice(1);
-  return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")} ${time}`;
+let auth;
+
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  // ✅ Use JSON directly from GitHub Actions secret
+  const creds = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+  auth = new google.auth.GoogleAuth({ credentials: creds, scopes: SCOPES });
+} else {
+  // ✅ Local dev fallback (expects gcp-key.json in project root)
+  const KEYFILEPATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.resolve("gcp-key.json");
+  if (!fs.existsSync(KEYFILEPATH)) {
+    console.error("❌ No credentials found. Provide GOOGLE_APPLICATION_CREDENTIALS_JSON or a gcp-key.json file.");
+    process.exit(1);
+  }
+  auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: SCOPES });
 }
 
+const sheets = google.sheets({ version: "v4", auth });
+
+// ======= Sheets helpers =======
 async function ensureColumnCapacity(sheetTitle, neededCols) {
   const ss = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   const sheet = ss.data.sheets.find(s => s.properties?.title === sheetTitle);
@@ -125,7 +168,7 @@ async function getFiltersFromSheet() {
   const rows = res.data.values || [];
   const filters = [];
   const updates = [];
-  const stampNow = seattleStamp();
+  const stampNow = seattleStampStr(); // Seattle-local string
 
   rows.forEach((row, i) => {
     const edition     = row[0] || "";
@@ -155,7 +198,7 @@ async function getFiltersFromSheet() {
     });
   }
 
-  dbg("FILTERS READY", { count: filters.length });
+  dbg("FILTERS READY", { count: filters.length, stamped: stampNow });
   return filters;
 }
 
@@ -275,7 +318,7 @@ async function scrapeFilteredCards(filter) {
               name: p.name || p.productName || p.title || "",
               edition: p.edition || p.productSet || p.setName || "",
               rarity: p.rarity || p.printingRarity || "",
-              price: pickCashPrice(p), // USD cash only
+              price: pickCashPrice(p), // ✅ USD cash only
               condition: p.condition || "",
             }))
           );
@@ -333,7 +376,7 @@ async function scrapeFilteredCards(filter) {
                 const edition = txt("div.productDetailSet, .productDetailSet, .setName");
                 const rarity = txt("div.productDetailRarity, .productDetailRarity, .rarity");
 
-                // CASH (USD) ONLY selectors/attributes
+                // ✅ CASH (USD) ONLY selectors/attributes
                 let price = null;
                 let t =
                   txt(".sellPrice .sellDollarAmount") ||
@@ -421,6 +464,7 @@ function parseUpdatedRange(a1) {
 async function writeCardsAsRows(cards) {
   const sheetName = "CK_buylist_scraper";
 
+  // Read existing grid
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!A:ZZZ`,
@@ -429,6 +473,7 @@ async function writeCardsAsRows(cards) {
   const header = rows[0] || ["Card Name", "Edition"];
   const dataRows = rows.slice(1);
 
+  // Compute header position for new time-series column
   let lastNonEmpty = 0;
   for (let i = header.length - 1; i >= 0; i--) {
     if ((header[i] ?? "") !== "") { lastNonEmpty = i + 1; break; }
@@ -446,6 +491,7 @@ async function writeCardsAsRows(cards) {
     newColIndex,
     newColA1,
     existingRows: dataRows.length,
+    stamp: seattleStampStr()
   });
 
   const existingNames = dataRows.map(r => r?.[0] ?? "");
@@ -462,16 +508,13 @@ async function writeCardsAsRows(cards) {
     if (idx >= 0) {
       priceByRow[idx] = toNumOrBlank(card.price);
     } else {
-      minimalRowsToAppend.push([card.name ?? "", card.edition ?? ""]);
+      minimalRowsToAppend.push([card.name ?? "", card.edition ?? ""]); // A:B only
       pricesForNewRows.push(toNumOrBlank(card.price));
     }
   }
 
-  // Build Seattle "now" as Sheets serial and write with USER_ENTERED
-  const now = new Date();
-  const seattleNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
-  const serial = (seattleNow.getTime() / 86400000) + 25569;
-
+  // Write DateTime in header row: use UTC serial, let Sheet (Seattle TZ) render local time
+  const serial = toSheetsSerial();
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!${newColA1}1`,
@@ -479,9 +522,9 @@ async function writeCardsAsRows(cards) {
     requestBody: { values: [[serial]] },
   });
 
-  // Force number format for header cell to date-time
-  const ss = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  const sheetId = ss.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
+  // Force number format for that cell to DateTime
+  const ssMeta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const sheetId = ssMeta.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
@@ -502,6 +545,7 @@ async function writeCardsAsRows(cards) {
     }
   });
 
+  // Write prices for existing rows
   if (dataRows.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
@@ -511,6 +555,7 @@ async function writeCardsAsRows(cards) {
     });
   }
 
+  // Append new rows (A:B only), then fill their prices in the timestamp column
   if (minimalRowsToAppend.length > 0) {
     const appendResp = await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
@@ -520,7 +565,7 @@ async function writeCardsAsRows(cards) {
       requestBody: { values: minimalRowsToAppend },
     });
 
-    const updatedRange = appendResp?.data?.updates?.updatedRange;
+    const updatedRange = appendResp?.data?.updates?.updatedRange; // e.g. 'CK_buylist_scraper!A101:B120'
     const parsed = parseUpdatedRange(updatedRange);
 
     let startRow, endRow;
@@ -545,7 +590,7 @@ async function writeCardsAsRows(cards) {
   }
 
   console.log(
-    `✅ Wrote header (date/time) to ${newColA1}1; updated ${dataRows.length} existing rows; appended ${minimalRowsToAppend.length} new rows (A:B only).`
+    `✅ ${seattleStampStr()} (Seattle) → ${newColA1}1; updated ${dataRows.length} existing; appended ${minimalRowsToAppend.length} new (A:B only).`
   );
 }
 
@@ -565,17 +610,22 @@ async function main() {
       includeFoil: f.includeFoil,
       name: f.name || "",
       perPage: f.perPage,
-      sort: f.sort
+      sort: f.sort,
+      stampSeattle: seattleStampStr()
     });
   }
 
   const allCardsNested = await Promise.all(filters.map((f) => scrapeFilteredCards(f)));
   const allCards = allCardsNested.flat();
 
-  const MUST_HAVE = ["Desculpting Blast", "All-Fates Stalker", "Seedship Agrarian"].map(s => s.toLowerCase());
+  const MUST_HAVE = [
+    "Desculpting Blast",
+    "All-Fates Stalker",
+    "Seedship Agrarian",
+  ].map(s => s.toLowerCase());
   const gotNames = new Set(allCards.map(c => String(c.name||"").toLowerCase()));
   const missing = MUST_HAVE.filter(n => !gotNames.has(n));
-  dbg("POST_SCRAPE_CHECK", { total: allCards.length, missing });
+  dbg("POST_SCRAPE_CHECK", { total: allCards.length, missing, when: seattleStampStr() });
 
   await writeCardsAsRows(allCards);
 }
