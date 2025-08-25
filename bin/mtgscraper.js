@@ -610,58 +610,66 @@ async function scrapeBulkPage() {
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari"
   );
 
+  const BULK_URL = "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=Pure+Bulk%3A+Unsorted";
+
   try {
     await page.goto(BULK_URL, { waitUntil: "networkidle2", timeout: 60_000 });
     try {
-      await page.waitForSelector(".productItem, .productItemView, .itemContentWrapper, .product-card", { timeout: 6000 });
+      // anything that yields the product rows to appear
+      await page.waitForSelector(".productTitle, .productItem, .productItemView, .itemContentWrapper", { timeout: 8000 });
     } catch (_) {}
 
-    const items = await page.$$eval(
-      ".productItem, .productItemView, .itemContentWrapper, .product-card",
-      (els) =>
-        els.map((el) => {
-          const q = (sel) => el.querySelector(sel);
-          const txt = (sel) => (q(sel)?.textContent || "").trim();
-          const parsePrice = (s) => {
-            const m = String(s || "").match(/[\d.]+/);
-            return m ? parseFloat(m[0]) : null;
-          };
+    const items = await page.$$eval(".productTitle", (titleEls) => {
+      const out = [];
+      const parsePrice = (s) => {
+        const m = String(s || "").match(/[\d.,]+/);
+        return m ? parseFloat(m[0].replace(/,/g, "")) : null;
+      };
 
-          // name variants seen on CK
-          const name =
-            txt(".productDetailTitle a") ||
-            txt("a.productDetailTitle") ||
-            txt(".productDetailTitle") ||
-            txt(".productCardTitle a") ||
-            txt(".productCardTitle") ||
-            txt(".productName a") ||
-            txt(".productName") ||
-            "";
+      for (const titleEl of titleEls) {
+        const name = (titleEl.textContent || "").trim();
+        if (!name) continue;
 
-          if (!name) return null;
+        // climb up a few levels to find a nearby .itemPrice
+        let price = null;
+        let container = titleEl;
+        for (let i = 0; i < 8 && container; i++) {
+          const pe =
+            container.querySelector(".itemPrice") ||
+            container.querySelector(".productAddToCart .itemPrice");
+          if (pe && pe.textContent) {
+            price = parsePrice(pe.textContent);
+            break;
+          }
+          container = container.parentElement;
+        }
 
-          // CASH (USD) price only
-          let t =
-            txt(".sellPrice .sellDollarAmount") ||
-            txt(".cashSellPrice .sellDollarAmount") ||
-            txt(".sellDollarAmount") ||
-            txt("[data-usd-price]") ||
-            (q("[data-usd-price]")?.getAttribute("data-usd-price") || "");
-          const price = parsePrice(t);
+        // one more fallback: scan siblings of the nearest product wrapper
+        if (price == null) {
+          const wrapper =
+            titleEl.closest(".productItem, .productItemView, .itemContentWrapper, .product-card") ||
+            titleEl.parentElement?.parentElement;
+          const pe2 = wrapper?.querySelector(".itemPrice, .sellDollarAmount");
+          if (pe2 && pe2.textContent) price = parsePrice(pe2.textContent);
+        }
 
-          return { name, price };
-        }).filter(Boolean)
-    );
+        out.push({ name, price });
+      }
+      // de-dupe by name (keep the first)
+      const seen = new Set();
+      return out.filter(it => {
+        const k = (it.name || "").toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    });
 
-    // de-dupe by name (keep first)
-    const seen = new Set();
-    const out = [];
-    for (const it of items) {
-      const k = it.name.toLowerCase();
-      if (!seen.has(k)) { seen.add(k); out.push(it); }
-    }
-    dbg("BULK_COUNT", out.length);
-    return out;
+    // Optional: only keep entries that actually have a price
+    const filtered = items.filter(it => typeof it.price === "number" && !Number.isNaN(it.price));
+
+    console.log(`✅ Bulk page: found ${items.length} items; with price: ${filtered.length}.`);
+    return filtered.length ? filtered : items;
   } finally {
     try { await page.close({ runBeforeUnload: false }); } catch {}
     try { await browser.close(); } catch {}
