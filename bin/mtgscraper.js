@@ -594,6 +594,204 @@ async function writeCardsAsRows(cards) {
   );
 }
 
+// ==================== BULK PAGE ADDITIONS =====================
+
+// ------- Bulk page constant -------
+const BULK_URL = "https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D=Pure+Bulk%3A+Unsorted";
+
+// Scrape the bulk page for { name, price }
+async function scrapeBulkPage() {
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+  const page = await browser.newPage();
+  await page.setUserAgent(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari"
+  );
+
+  try {
+    await page.goto(BULK_URL, { waitUntil: "networkidle2", timeout: 60_000 });
+    try {
+      await page.waitForSelector(".productItem, .productItemView, .itemContentWrapper, .product-card", { timeout: 6000 });
+    } catch (_) {}
+
+    const items = await page.$$eval(
+      ".productItem, .productItemView, .itemContentWrapper, .product-card",
+      (els) =>
+        els.map((el) => {
+          const q = (sel) => el.querySelector(sel);
+          const txt = (sel) => (q(sel)?.textContent || "").trim();
+          const parsePrice = (s) => {
+            const m = String(s || "").match(/[\d.]+/);
+            return m ? parseFloat(m[0]) : null;
+          };
+
+          // name variants seen on CK
+          const name =
+            txt(".productDetailTitle a") ||
+            txt("a.productDetailTitle") ||
+            txt(".productDetailTitle") ||
+            txt(".productCardTitle a") ||
+            txt(".productCardTitle") ||
+            txt(".productName a") ||
+            txt(".productName") ||
+            "";
+
+          if (!name) return null;
+
+          // CASH (USD) price only
+          let t =
+            txt(".sellPrice .sellDollarAmount") ||
+            txt(".cashSellPrice .sellDollarAmount") ||
+            txt(".sellDollarAmount") ||
+            txt("[data-usd-price]") ||
+            (q("[data-usd-price]")?.getAttribute("data-usd-price") || "");
+          const price = parsePrice(t);
+
+          return { name, price };
+        }).filter(Boolean)
+    );
+
+    // de-dupe by name (keep first)
+    const seen = new Set();
+    const out = [];
+    for (const it of items) {
+      const k = it.name.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); out.push(it); }
+    }
+    dbg("BULK_COUNT", out.length);
+    return out;
+  } finally {
+    try { await page.close({ runBeforeUnload: false }); } catch {}
+    try { await browser.close(); } catch {}
+  }
+}
+
+// Write to CK_bulk_scraper: names in col A (row2+), new price column per run
+async function writeBulkPrices(items) {
+  const sheetName = "CK_bulk_scraper";
+
+  // Read existing grid
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A:ZZZ`,
+  });
+  const rows = res.data.values || [];
+  const header = rows[0] || [];       // row 1 (timestamps go here, starting at B1)
+  const dataRows = rows.slice(1);     // rows 2+
+
+  // Column math — find next empty header col (minimum B)
+  let lastNonEmpty = 0;
+  for (let i = header.length - 1; i >= 0; i--) {
+    if ((header[i] ?? "") !== "") { lastNonEmpty = i + 1; break; }
+  }
+  const baseCols = Math.max(header.length, lastNonEmpty, 1); // ensure col A exists
+  const newColIndex = Math.max(baseCols + 1, 2); // timestamps start at B (col 2)
+  const newColA1 = colToA1(newColIndex);
+
+  await ensureColumnCapacity(sheetName, newColIndex);
+
+  // Build name→row map for existing sheet (col A)
+  const existingNames = dataRows.map(r => r?.[0] ?? "");
+  const nameToRowIdx = new Map(); // nameLower -> sheetRowNumber
+  for (let i = 0; i < existingNames.length; i++) {
+    const nm = String(existingNames[i] || "");
+    if (nm) nameToRowIdx.set(nm.toLowerCase(), i + 2); // sheet rows start at 2
+  }
+
+  // Gather writes
+  const priceByRow = Array(dataRows.length).fill(""); // existing rows’ new column
+  const newNames = [];    // names to append (col A)
+  const newPrices = [];   // prices to write in the new column for appended rows
+
+  for (const { name, price } of items) {
+    const rowNum = nameToRowIdx.get(String(name).toLowerCase());
+    if (rowNum) {
+      priceByRow[rowNum - 2] = toNumOrBlank(price);
+    } else {
+      newNames.push([name]);                 // only column A
+      newPrices.push(toNumOrBlank(price));   // value for new timestamp column
+    }
+  }
+
+  // 1) Seattle timestamp (numeric) in header
+  const serial = toSheetsSerial();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!${newColA1}1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[serial]] },
+  });
+
+  // 1b) Force header cell to DateTime format
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const sheetId = meta.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      requests: [{
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: 0, endRowIndex: 1,
+            startColumnIndex: newColIndex - 1, endColumnIndex: newColIndex,
+          },
+          cell: { userEnteredFormat: { numberFormat: { type: "DATE_TIME", pattern: "yyyy-mm-dd hh:mm:ss" } } },
+          fields: "userEnteredFormat.numberFormat"
+        }
+      }]
+    }
+  });
+
+  // 2) Fill new column for existing rows
+  if (dataRows.length > 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!${newColA1}2:${newColA1}${dataRows.length + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: priceByRow.map(v => [v]) },
+    });
+  }
+
+  // 3) Append new names (A), then their prices in the new column
+  if (newNames.length > 0) {
+    const appendResp = await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!A1`,
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: newNames },
+    });
+
+    // Determine rows appended
+    const updatedRange = appendResp?.data?.updates?.updatedRange; // e.g. 'CK_bulk_scraper!A42:A65'
+    let startRow, endRow;
+    const m = String(updatedRange || "").match(/!\$?A\$?(\d+):\$?A\$?(\d+)/);
+    if (m) {
+      startRow = Number(m[1]); endRow = Number(m[2]);
+    } else {
+      startRow = Math.max(2, dataRows.length + 2);
+      endRow = startRow + newNames.length - 1;
+    }
+
+    const count = endRow - startRow + 1;
+    const tsRange = `${sheetName}!${newColA1}${startRow}:${newColA1}${endRow}`;
+    const tsValues = Array.from({ length: count }, (_, i) => [newPrices[i] ?? ""]);
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: tsRange,
+      valueInputOption: "RAW",
+      requestBody: { values: tsValues },
+    });
+  }
+
+  console.log(`✅ Bulk: wrote ${items.length} prices into new column ${newColA1} (sheet ${sheetName}).`);
+}
+
+// ================== END BULK PAGE ADDITIONS ===================
+
 // ======= Main =======
 async function main() {
   const filters = await getFiltersFromSheet();
@@ -615,6 +813,7 @@ async function main() {
     });
   }
 
+  // ===== Existing CK_buylist_scraper flow =====
   const allCardsNested = await Promise.all(filters.map((f) => scrapeFilteredCards(f)));
   const allCards = allCardsNested.flat();
 
@@ -628,6 +827,10 @@ async function main() {
   dbg("POST_SCRAPE_CHECK", { total: allCards.length, missing, when: seattleStampStr() });
 
   await writeCardsAsRows(allCards);
+
+  // ===== NEW: Bulk page → CK_bulk_scraper =====
+  const bulkItems = await scrapeBulkPage();
+  await writeBulkPrices(bulkItems);
 }
 
 main().finally(() => {
