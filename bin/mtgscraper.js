@@ -42,7 +42,7 @@ function seattleStampStr(d = seattleNow()) {
 // using all-UTC math so it's stable regardless of where the code runs.
 function toSheetsSerial() {
   const d = new Date();
-  const msSinceEpochUTC = d.getTime() - Date.UTC(1899, 11, 30, 0, 0, 0) - 420;
+  const msSinceEpochUTC = d.getTime() - Date.UTC(1899, 11, 30, 0, 0, 0) - 25200000;
   return msSinceEpochUTC / 86400000;
 }
 
