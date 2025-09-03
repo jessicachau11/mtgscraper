@@ -646,11 +646,11 @@ async function scrapeBulkPage() {
   }
 }
 
-// Write to CK_bulk_scraper: names in col A (row2+), new price column per run
+// ======= Write bulk prices to sheet =======
 async function writeBulkPrices(items) {
   const sheetName = "CK_bulk_scraper";
 
-  // Read existing grid
+  // 1) Read existing sheet
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!A:ZZZ`,
@@ -659,89 +659,78 @@ async function writeBulkPrices(items) {
   const header = rows[0] || [];
   const dataRows = rows.slice(1);
 
-  // Column math — next empty col
-  let lastNonEmpty = 0;
-  for (let i = header.length - 1; i >= 0; i--) {
-    if ((header[i] ?? "") !== "") { lastNonEmpty = i + 1; break; }
-  }
-  const baseCols = Math.max(header.length, lastNonEmpty, 1);
-  const newColIndex = Math.max(baseCols + 1, 2);
-  const newColA1 = colToA1(newColIndex);
+  // 2) Build Seattle timestamp
+  const seattleDate = new Date().toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+  });
+  const date = new Date(seattleDate);
+  const serial = Math.floor(date.getTime() / 1000 / 60 / 60 / 24) + 25569; // Excel serial date
 
-  await ensureColumnCapacity(sheetName, newColIndex);
+  // 3) Add new timestamp column to header
+  const newColIdx = header.length;
+  const newColA1 = columnToLetter(newColIdx + 1);
+  header.push(serial);
 
-  // header serial
-  const serial = toSheetsSerial();
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!${newColA1}1`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[serial]] },
+  // 4) Existing card names map
+  const existingNames = new Map();
+  dataRows.forEach((r, i) => {
+    const nm = (r[0] || "").trim().toLowerCase();
+    if (nm) existingNames.set(nm, i);
   });
 
-  // ✅ enforce datetime format in header
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  const sheetId = meta.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      requests: [{
-        repeatCell: {
-          range: {
-            sheetId,
-            startRowIndex: 0, endRowIndex: 1,
-            startColumnIndex: newColIndex - 1, endColumnIndex: newColIndex,
-          },
-          cell: { userEnteredFormat: { numberFormat: { type: "DATE_TIME", pattern: "MM-dd-yyyy hh:mm AM/PM" } } },
-          fields: "userEnteredFormat.numberFormat"
-        }
-      }]
-    }
+  // 5) Fill new column for existing rows
+  const priceByRow = dataRows.map((r) => {
+    const nm = (r[0] || "").trim().toLowerCase();
+    const it = items.find((it) => it.name.toLowerCase() === nm);
+    return it ? it.price : "";
   });
 
-  // 2) Fill new column for existing rows
   if (dataRows.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: `${sheetName}!${newColA1}2:${newColA1}${dataRows.length + 1}`,
       valueInputOption: "RAW",
-      requestBody: { values: priceByRow.map(v => [v]) },
+      requestBody: { values: priceByRow.map((v) => [v]) },
     });
+  }
 
-  // 3) Append new names (A), then their prices in the new column
-  if (newNames.length > 0) {
-    const appendResp = await sheets.spreadsheets.values.append({
+  // 6) Append new rows for new cards
+  const newItems = items.filter(
+    (it) => !existingNames.has(it.name.toLowerCase())
+  );
+
+  if (newItems.length > 0) {
+    // Add their names in col A
+    await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: `${sheetName}!A1`,
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: newNames },
+      requestBody: { values: newItems.map((it) => [it.name]) },
     });
 
-    // Determine rows appended
-    const updatedRange = appendResp?.data?.updates?.updatedRange; // e.g. 'CK_bulk_scraper!A42:A65'
-    let startRow, endRow;
-    const m = String(updatedRange || "").match(/!\$?A\$?(\d+):\$?A\$?(\d+)/);
-    if (m) {
-      startRow = Number(m[1]); endRow = Number(m[2]);
-    } else {
-      startRow = Math.max(2, dataRows.length + 2);
-      endRow = startRow + newNames.length - 1;
-    }
+    // After appending, compute new row indices
+    const newStartRow = dataRows.length + 2;
+    const newEndRow = newStartRow + newItems.length - 1;
 
-    const count = endRow - startRow + 1;
-    const tsRange = `${sheetName}!${newColA1}${startRow}:${newColA1}${endRow}`;
-    const tsValues = Array.from({ length: count }, (_, i) => [newPrices[i] ?? ""]);
-
+    // Fill timestamp col for new rows
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: tsRange,
+      range: `${sheetName}!${newColA1}${newStartRow}:${newColA1}${newEndRow}`,
       valueInputOption: "RAW",
-      requestBody: { values: tsValues },
+      requestBody: { values: newItems.map((it) => [it.price]) },
     });
   }
 
-  console.log(`✅ Bulk: wrote ${items.length} prices into new column ${newColA1} (sheet ${sheetName}).`);
+  // 7) Update header row
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!1:1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [header] },
+  });
+
+  console.log(`✅ Updated bulk sheet with ${items.length} cards.`);
 }
 
 // ================== END BULK PAGE ADDITIONS ===================
