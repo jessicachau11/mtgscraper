@@ -41,25 +41,9 @@ function seattleStampStr(d = seattleNow()) {
 // Convert the *Seattle local wall time* to a Google Sheets serial,
 // using all-UTC math so it's stable regardless of where the code runs.
 function toSheetsSerial() {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  });
-  const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
-  const Y = Number(parts.year);
-  const M = Number(parts.month);
-  const D = Number(parts.day);
-  const h = Number(parts.hour);
-  const m = Number(parts.minute);
-  const s = Number(parts.second);
-
-  // Sheets/Excel epoch start: 1899-12-30 (day 0), use UTC baseline.
-  const msSinceEpochUTC =
-    Date.UTC(Y, M - 1, D, h, m, s) - Date.UTC(1899, 11, 30, 0, 0, 0);
-
-  return msSinceEpochUTC / 86400000; // ms per day
+  const d = new Date();
+  const msSinceEpochUTC = d.getTime() - Date.UTC(1899, 11, 30, 0, 0, 0);
+  return msSinceEpochUTC / 86400000;
 }
 
 function safeSlug(s) {
