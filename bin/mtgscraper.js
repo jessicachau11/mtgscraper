@@ -599,7 +599,7 @@ async function scrapeBulkPage() {
   try {
     await page.goto(BULK_URL, { waitUntil: "networkidle2", timeout: 60_000 });
     try {
-      // wait for product rows
+      // anything that yields the product rows to appear
       await page.waitForSelector(".productTitle, .productItem, .productItemView, .itemContentWrapper", { timeout: 8000 });
     } catch (_) {}
 
@@ -609,52 +609,55 @@ async function scrapeBulkPage() {
         const m = String(s || "").match(/[\d.,]+/);
         return m ? parseFloat(m[0].replace(/,/g, "")) : null;
       };
+      const parseIntSafe = (v) => {
+        const n = parseInt(String(v || "").trim(), 10);
+        return Number.isFinite(n) ? n : 0;
+      };
 
       for (const titleEl of titleEls) {
-        const name = (titleEl.textContent || "").trim();
+        const wrapper =
+          titleEl.closest(".productItem, .productItemView, .itemContentWrapper, .product-card") ||
+          titleEl.parentElement?.parentElement ||
+          titleEl;
+
+        // Prefer hidden inputs inside the add-to-cart form
+        const form = wrapper.querySelector("form.addToCartForm") || titleEl.closest("form.addToCartForm");
+
+        // Read maxQty from the hidden input exactly like the snippet
+        const maxQtyInput =
+          form?.querySelector('input[name="maxQty"].maxQty') ||
+          form?.querySelector('input[name="maxQty"]') ||
+          form?.querySelector('.maxQty');
+
+        const maxQty = parseIntSafe(maxQtyInput?.getAttribute("value"));
+
+        // Skip out-of-stock
+        if (!(maxQty > 0)) continue;
+
+        // Name: prefer hidden input name, fallback to visible title
+        const hiddenName = form?.querySelector('input[name="name"]')?.getAttribute("value") || "";
+        const visibleName = (wrapper.querySelector(".productTitle")?.textContent || titleEl.textContent || "").trim();
+        const name = hiddenName || visibleName;
         if (!name) continue;
 
-        // climb up a few levels to find a nearby .itemPrice
+        // Price: prefer hidden input price, fallback to visible price nodes
         let price = null;
-        let maxQty = 0;
-        let container = titleEl;
-        for (let i = 0; i < 8 && container; i++) {
+        const hiddenPrice = form?.querySelector('input[name="price"]')?.getAttribute("value");
+        if (hiddenPrice) {
+          price = parseFloat(hiddenPrice);
+        }
+        if (price == null || Number.isNaN(price)) {
           const pe =
-            container.querySelector(".itemPrice") ||
-            container.querySelector(".productAddToCart .itemPrice");
-          if (pe && pe.textContent) {
-            price = parsePrice(pe.textContent);
-          }
-
-          // ✅ look for input.qtyInput[max]
-          const qtyInput = container.querySelector("input.qtyInput");
-          if (qtyInput && qtyInput.getAttribute("max")) {
-            maxQty = parseInt(qtyInput.getAttribute("max"), 10) || 0;
-          }
-          container = container.parentElement;
+            wrapper.querySelector(".itemPrice") ||
+            wrapper.querySelector(".productAddToCart .itemPrice") ||
+            wrapper.querySelector(".sellDollarAmount");
+          if (pe && pe.textContent) price = parsePrice(pe.textContent);
         }
 
-        // fallback wrapper check
-        if (price == null) {
-          const wrapper =
-            titleEl.closest(".productItem, .productItemView, .itemContentWrapper, .product-card") ||
-            titleEl.parentElement?.parentElement;
-          const pe2 = wrapper?.querySelector(".itemPrice, .sellDollarAmount");
-          if (pe2 && pe2.textContent) price = parsePrice(pe2.textContent);
-
-          const qtyInput = wrapper?.querySelector("input.qtyInput");
-          if (qtyInput && qtyInput.getAttribute("max")) {
-            maxQty = parseInt(qtyInput.getAttribute("max"), 10) || 0;
-          }
-        }
-
-        // ✅ only keep in-stock items
-        if (maxQty > 0) {
-          out.push({ name, price });
-        }
+        out.push({ name, price });
       }
 
-      // de-dupe by name
+      // de-dupe by name (keep the first)
       const seen = new Set();
       return out.filter(it => {
         const k = (it.name || "").toLowerCase();
@@ -664,10 +667,10 @@ async function scrapeBulkPage() {
       });
     });
 
-    // keep only items with a numeric price
+    // Only keep entries that actually have a numeric price
     const filtered = items.filter(it => typeof it.price === "number" && !Number.isNaN(it.price));
 
-    console.log(`✅ Bulk page: found ${items.length} in-stock items; with price: ${filtered.length}.`);
+    console.log(`✅ Bulk page: in-stock items found: ${items.length}; with price: ${filtered.length}.`);
     return filtered.length ? filtered : [];
   } finally {
     try { await page.close({ runBeforeUnload: false }); } catch {}
