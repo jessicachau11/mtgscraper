@@ -599,7 +599,7 @@ async function scrapeBulkPage() {
   try {
     await page.goto(BULK_URL, { waitUntil: "networkidle2", timeout: 60_000 });
     try {
-      // anything that yields the product rows to appear
+      // wait for product rows
       await page.waitForSelector(".productTitle, .productItem, .productItemView, .itemContentWrapper", { timeout: 8000 });
     } catch (_) {}
 
@@ -616,6 +616,7 @@ async function scrapeBulkPage() {
 
         // climb up a few levels to find a nearby .itemPrice
         let price = null;
+        let maxQty = 0;
         let container = titleEl;
         for (let i = 0; i < 8 && container; i++) {
           const pe =
@@ -623,23 +624,37 @@ async function scrapeBulkPage() {
             container.querySelector(".productAddToCart .itemPrice");
           if (pe && pe.textContent) {
             price = parsePrice(pe.textContent);
-            break;
+          }
+
+          // ✅ look for input.qtyInput[max]
+          const qtyInput = container.querySelector("input.qtyInput");
+          if (qtyInput && qtyInput.getAttribute("max")) {
+            maxQty = parseInt(qtyInput.getAttribute("max"), 10) || 0;
           }
           container = container.parentElement;
         }
 
-        // one more fallback: scan siblings of the nearest product wrapper
+        // fallback wrapper check
         if (price == null) {
           const wrapper =
             titleEl.closest(".productItem, .productItemView, .itemContentWrapper, .product-card") ||
             titleEl.parentElement?.parentElement;
           const pe2 = wrapper?.querySelector(".itemPrice, .sellDollarAmount");
           if (pe2 && pe2.textContent) price = parsePrice(pe2.textContent);
+
+          const qtyInput = wrapper?.querySelector("input.qtyInput");
+          if (qtyInput && qtyInput.getAttribute("max")) {
+            maxQty = parseInt(qtyInput.getAttribute("max"), 10) || 0;
+          }
         }
 
-        out.push({ name, price });
+        // ✅ only keep in-stock items
+        if (maxQty > 0) {
+          out.push({ name, price });
+        }
       }
-      // de-dupe by name (keep the first)
+
+      // de-dupe by name
       const seen = new Set();
       return out.filter(it => {
         const k = (it.name || "").toLowerCase();
@@ -649,11 +664,11 @@ async function scrapeBulkPage() {
       });
     });
 
-    // Optional: only keep entries that actually have a price
+    // keep only items with a numeric price
     const filtered = items.filter(it => typeof it.price === "number" && !Number.isNaN(it.price));
 
-    console.log(`✅ Bulk page: found ${items.length} items; with price: ${filtered.length}.`);
-    return filtered.length ? filtered : items;
+    console.log(`✅ Bulk page: found ${items.length} in-stock items; with price: ${filtered.length}.`);
+    return filtered.length ? filtered : [];
   } finally {
     try { await page.close({ runBeforeUnload: false }); } catch {}
     try { await browser.close(); } catch {}
