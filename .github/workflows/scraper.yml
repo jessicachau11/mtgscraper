@@ -1,33 +1,38 @@
-name: CK Scraper
-
-on:
-  schedule:
-    - cron: "0 * * * *"   # every hour (UTC) 
-  workflow_dispatch:
-
-concurrency:
-  group: ck-scraper
-  cancel-in-progress: false
-
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install deps
-        run: npm ci
-      - name: Run scraper
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GCP_KEY_JSON }}
-          CK_DEBUG: "1"
-          CK_DUMP: "0"
-          CK_OPEN: "0"
-        run: node bin/mtgscraper.js
+{
+  "name": "@dgoings/mtgscraper",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A CLI tool for scraping the CardKingdom buylist",
+  "author": "Dylan Goings <dylan@dgoings.com>",
+  "license": "ISC",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dgoings/mtgscraper.git"
+  },
+  "bin": {
+    "mtgscraper": "bin/mtgscraper.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "assets/"
+  ],
+  "keywords": [
+    "cli",
+    "magic",
+    "mtg",
+    "cardkingdom",
+    "magic:the-gathering"
+  ],
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "commander": "^14.0.0",
+    "googleapis": "^156.0.0",
+    "node-fetch": "^3.3.2",
+    "puppeteer": "^24.16.2"
+  }
+}
