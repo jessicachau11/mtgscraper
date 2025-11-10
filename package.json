@@ -1,2 +1,38 @@
-- name: Install deps
-run: npm install mysql2
+{
+  "name": "@dgoings/mtgscraper",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A CLI tool for scraping the CardKingdom buylist",
+  "author": "Dylan Goings <dylan@dgoings.com>",
+  "license": "ISC",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dgoings/mtgscraper.git"
+  },
+  "bin": {
+    "mtgscraper": "bin/mtgscraper.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "assets/"
+  ],
+  "keywords": [
+    "cli",
+    "magic",
+    "mtg",
+    "cardkingdom",
+    "magic:the-gathering"
+  ],
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "commander": "^14.0.0",
+    "googleapis": "^156.0.0",
+    "node-fetch": "^3.3.2",
+    "puppeteer": "^24.16.2"
+  }
+}
