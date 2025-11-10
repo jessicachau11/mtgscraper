@@ -21,7 +21,7 @@ const db = await mysql.createConnection({
   host: "34.42.89.251", // Example: 34.72.123.45
   user: "root",
   password: "Fergus123!",
-  database: "mtg_scraper-db",
+  database: "mtg_sql",
 });
 console.log("✅ Connected to MySQL");
 
