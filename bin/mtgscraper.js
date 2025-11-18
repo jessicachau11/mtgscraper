@@ -445,138 +445,138 @@ function parseUpdatedRange(a1) {
 }
 
 // ===== Targeted write: only the new timestamp column + append new rows (A:B only) =====
-async function writeCardsAsRows(cards) {
-  const sheetName = "CK_buylist_scraper";
+// async function writeCardsAsRows(cards) {
+//   const sheetName = "CK_buylist_scraper";
 
-  // Read existing grid
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:ZZZ`,
-  });
-  const rows = res.data.values || [];
-  const header = rows[0] || ["Card Name", "Edition"];
-  const dataRows = rows.slice(1);
+//   // Read existing grid
+//   const res = await sheets.spreadsheets.values.get({
+//     spreadsheetId: SPREADSHEET_ID,
+//     range: `${sheetName}!A:ZZZ`,
+//   });
+//   const rows = res.data.values || [];
+//   const header = rows[0] || ["Card Name", "Edition"];
+//   const dataRows = rows.slice(1);
 
-  // Compute header position for new time-series column
-  let lastNonEmpty = 0;
-  for (let i = header.length - 1; i >= 0; i--) {
-    if ((header[i] ?? "") !== "") { lastNonEmpty = i + 1; break; }
-  }
-  const baseCols   = Math.max(header.length, lastNonEmpty);
-  const newColIndex = baseCols + 1;
-  const newColA1    = colToA1(newColIndex);
+//   // Compute header position for new time-series column
+//   let lastNonEmpty = 0;
+//   for (let i = header.length - 1; i >= 0; i--) {
+//     if ((header[i] ?? "") !== "") { lastNonEmpty = i + 1; break; }
+//   }
+//   const baseCols   = Math.max(header.length, lastNonEmpty);
+//   const newColIndex = baseCols + 1;
+//   const newColA1    = colToA1(newColIndex);
 
-  await ensureColumnCapacity(sheetName, newColIndex);
+//   await ensureColumnCapacity(sheetName, newColIndex);
 
-  dbg("WRITE_PLAN", {
-    sheetName,
-    headerWidth: header.length,
-    lastNonEmptyHeaderCol: lastNonEmpty || null,
-    newColIndex,
-    newColA1,
-    existingRows: dataRows.length,
-    stamp: seattleStampStr()
-  });
+//   dbg("WRITE_PLAN", {
+//     sheetName,
+//     headerWidth: header.length,
+//     lastNonEmptyHeaderCol: lastNonEmpty || null,
+//     newColIndex,
+//     newColA1,
+//     existingRows: dataRows.length,
+//     stamp: seattleStampStr()
+//   });
 
-  const existingNames = dataRows.map(r => r?.[0] ?? "");
-  const existingEditions = dataRows.map(r => r?.[1] ?? "");
-  const priceByRow = dataRows.map(() => "");
+//   const existingNames = dataRows.map(r => r?.[0] ?? "");
+//   const existingEditions = dataRows.map(r => r?.[1] ?? "");
+//   const priceByRow = dataRows.map(() => "");
 
-  const minimalRowsToAppend = [];
-  const pricesForNewRows    = [];
+//   const minimalRowsToAppend = [];
+//   const pricesForNewRows    = [];
 
-  for (const card of cards) {
-    const idx = existingNames.findIndex((nm, i) =>
-      nm === (card.name ?? "") && existingEditions[i] === (card.edition ?? "")
-    );
-    if (idx >= 0) {
-      priceByRow[idx] = toNumOrBlank(card.price);
-    } else {
-      minimalRowsToAppend.push([card.name ?? "", card.edition ?? ""]); // A:B only
-      pricesForNewRows.push(toNumOrBlank(card.price));
-    }
-  }
+//   for (const card of cards) {
+//     const idx = existingNames.findIndex((nm, i) =>
+//       nm === (card.name ?? "") && existingEditions[i] === (card.edition ?? "")
+//     );
+//     if (idx >= 0) {
+//       priceByRow[idx] = toNumOrBlank(card.price);
+//     } else {
+//       minimalRowsToAppend.push([card.name ?? "", card.edition ?? ""]); // A:B only
+//       pricesForNewRows.push(toNumOrBlank(card.price));
+//     }
+//   }
 
-  // Write DateTime in header row: use UTC serial, let Sheet (Seattle TZ) render local time
-  const serial = toSheetsSerial();
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!${newColA1}1`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[serial]] },
-  });
+//   // Write DateTime in header row: use UTC serial, let Sheet (Seattle TZ) render local time
+//   const serial = toSheetsSerial();
+//   await sheets.spreadsheets.values.update({
+//     spreadsheetId: SPREADSHEET_ID,
+//     range: `${sheetName}!${newColA1}1`,
+//     valueInputOption: "USER_ENTERED",
+//     requestBody: { values: [[serial]] },
+//   });
 
-  // Force number format for that cell to DateTime
-  const ssMeta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  const sheetId = ssMeta.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
+//   // Force number format for that cell to DateTime
+//   const ssMeta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+//   const sheetId = ssMeta.data.sheets.find(s => s.properties.title === sheetName).properties.sheetId;
 
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      requests: [{
-        repeatCell: {
-          range: {
-            sheetId,
-            startRowIndex: 0,
-            endRowIndex: 1,
-            startColumnIndex: newColIndex - 1,
-            endColumnIndex: newColIndex
-          },
-          cell: { userEnteredFormat: { numberFormat: { type: "DATE_TIME", pattern: "yyyy-mm-dd hh:mm:ss" } } },
-          fields: "userEnteredFormat.numberFormat"
-        }
-      }]
-    }
-  });
+//   await sheets.spreadsheets.batchUpdate({
+//     spreadsheetId: SPREADSHEET_ID,
+//     requestBody: {
+//       requests: [{
+//         repeatCell: {
+//           range: {
+//             sheetId,
+//             startRowIndex: 0,
+//             endRowIndex: 1,
+//             startColumnIndex: newColIndex - 1,
+//             endColumnIndex: newColIndex
+//           },
+//           cell: { userEnteredFormat: { numberFormat: { type: "DATE_TIME", pattern: "yyyy-mm-dd hh:mm:ss" } } },
+//           fields: "userEnteredFormat.numberFormat"
+//         }
+//       }]
+//     }
+//   });
 
-  // Write prices for existing rows
-  if (dataRows.length > 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!${newColA1}2:${newColA1}${dataRows.length + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: priceByRow.map(v => [v]) },
-    });
-  }
+//   // Write prices for existing rows
+//   if (dataRows.length > 0) {
+//     await sheets.spreadsheets.values.update({
+//       spreadsheetId: SPREADSHEET_ID,
+//       range: `${sheetName}!${newColA1}2:${newColA1}${dataRows.length + 1}`,
+//       valueInputOption: "RAW",
+//       requestBody: { values: priceByRow.map(v => [v]) },
+//     });
+//   }
 
-  // Append new rows (A:B only), then fill their prices in the timestamp column
-  if (minimalRowsToAppend.length > 0) {
-    const appendResp = await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A1`,
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: minimalRowsToAppend },
-    });
+//   // Append new rows (A:B only), then fill their prices in the timestamp column
+//   if (minimalRowsToAppend.length > 0) {
+//     const appendResp = await sheets.spreadsheets.values.append({
+//       spreadsheetId: SPREADSHEET_ID,
+//       range: `${sheetName}!A1`,
+//       valueInputOption: "RAW",
+//       insertDataOption: "INSERT_ROWS",
+//       requestBody: { values: minimalRowsToAppend },
+//     });
 
-    const updatedRange = appendResp?.data?.updates?.updatedRange; // e.g. 'CK_buylist_scraper!A101:B120'
-    const parsed = parseUpdatedRange(updatedRange);
+//     const updatedRange = appendResp?.data?.updates?.updatedRange; // e.g. 'CK_buylist_scraper!A101:B120'
+//     const parsed = parseUpdatedRange(updatedRange);
 
-    let startRow, endRow;
-    if (parsed && parsed.sheet === sheetName && parsed.row1 >= 1 && parsed.row2 >= parsed.row1) {
-      startRow = parsed.row1;
-      endRow   = parsed.row2;
-    } else {
-      startRow = Math.max(2, dataRows.length + 2);
-      endRow   = startRow + minimalRowsToAppend.length - 1;
-    }
+//     let startRow, endRow;
+//     if (parsed && parsed.sheet === sheetName && parsed.row1 >= 1 && parsed.row2 >= parsed.row1) {
+//       startRow = parsed.row1;
+//       endRow   = parsed.row2;
+//     } else {
+//       startRow = Math.max(2, dataRows.length + 2);
+//       endRow   = startRow + minimalRowsToAppend.length - 1;
+//     }
 
-    const newCount = endRow - startRow + 1;
-    const tsRange  = `${sheetName}!${newColA1}${startRow}:${newColA1}${endRow}`;
-    const tsValues = Array.from({ length: newCount }, (_, i) => [pricesForNewRows[i]]);
+//     const newCount = endRow - startRow + 1;
+//     const tsRange  = `${sheetName}!${newColA1}${startRow}:${newColA1}${endRow}`;
+//     const tsValues = Array.from({ length: newCount }, (_, i) => [pricesForNewRows[i]]);
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: tsRange,
-      valueInputOption: "RAW",
-      requestBody: { values: tsValues },
-    });
-  }
+//     await sheets.spreadsheets.values.update({
+//       spreadsheetId: SPREADSHEET_ID,
+//       range: tsRange,
+//       valueInputOption: "RAW",
+//       requestBody: { values: tsValues },
+//     });
+//   }
 
-  console.log(
-    `✅ ${seattleStampStr()} (Seattle) → ${newColA1}1; updated ${dataRows.length} existing; appended ${minimalRowsToAppend.length} new (A:B only).`
-  );
-}
+//   console.log(
+//     `✅ ${seattleStampStr()} (Seattle) → ${newColA1}1; updated ${dataRows.length} existing; appended ${minimalRowsToAppend.length} new (A:B only).`
+//   );
+// }
 
 // ===== NEW: Write raw buylist rows (Date, Edition, Card Name, Price) =====
 async function writeBuylistRows(cards) {
