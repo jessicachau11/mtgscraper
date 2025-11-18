@@ -884,7 +884,7 @@ async function main() {
   const missing = MUST_HAVE.filter(n => !gotNames.has(n));
   dbg("POST_SCRAPE_CHECK", { total: allCards.length, missing, when: seattleStampStr() });
 
-  await writeCardsAsRows(allCards);
+  //await writeCardsAsRows(allCards);
   await writeBuylistRows(allCards);
 
   // ===== NEW: Bulk page → CK_bulk_scraper =====
