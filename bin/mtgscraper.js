@@ -69,6 +69,31 @@ function maybeOpen(filePath) {
   }
 }
 
+async function withRetry(fn, attempts = 5, delay = 800) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err?.code || err?.response?.status;
+      const retriable = status === 503 || status === 500 || status === 429;
+
+      if (!retriable || i === attempts) {
+        throw err; // give up
+      }
+
+      console.warn(
+        `⚠️ Google Sheets backend error ${status}, retrying (${i}/${attempts})...`
+      );
+
+      // Exponential backoff
+      await new Promise(r => setTimeout(r, delay * i));
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 // ======= Google Sheets setup (CI-friendly) =======
 const SPREADSHEET_ID = "1_yLY6WHXpDq974gWveUHs_A1zF8jl3E4xmSKjnQqfcs";
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -604,23 +629,34 @@ async function writeBuylistRows(cards) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   const sheetId = meta.data.sheets.find(s => s.properties.title === sheetName)?.properties?.sheetId;
   if (sheetId) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      requestBody: {
-        requests: [{
-          repeatCell: {
-            range: {
-              sheetId,
-              startRowIndex: 1, // data rows
-              startColumnIndex: 0,
-              endColumnIndex: 1
+    await withRetry(() =>
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 1,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    numberFormat: {
+                      type: "DATE_TIME",
+                      pattern: "yyyy-mm-dd hh:mm:ss",
+                    },
+                  },
+                },
+                fields: "userEnteredFormat.numberFormat",
+              },
             },
-            cell: { userEnteredFormat: { numberFormat: { type: "DATE_TIME", pattern: "yyyy-mm-dd hh:mm:ss" } } },
-            fields: "userEnteredFormat.numberFormat"
-          }
-        }]
-      }
-    });
+          ],
+        },
+      })
+    );
   }
 
   console.log(`✅ Buylist rows: appended ${values.length} rows to ${sheetName}.`);
